@@ -134,7 +134,7 @@ def _parse_qstat_state(qstat_out, job_id):
     for line in lines:
         if line:
             job, prior, name, user, state = line.strip().split()[0:5]
-            if int(job) == int(job_id):
+            if int(job[:len(str(job_id))]) == int(job_id):
                 return state
     return 'u'
 
@@ -272,6 +272,7 @@ class SGEJobTask(luigi.Task):
         if self.tmp_dir and os.path.exists(self.tmp_dir):
             logger.info('Removing temporary directory %s' % self.tmp_dir)
             shutil.rmtree(self.tmp_dir)
+    
 
     def _track_job(self):
         while True:
@@ -281,14 +282,8 @@ class SGEJobTask(luigi.Task):
             # See what the job's up to
             # ASSUMPTION
 
-            if TORQUE:
-                 from pypbs import qstat, pbsxml
-                 xml = qstat.get_qstat_xml(jobs=[self.job_id])
-                 jobdef = list(pbsxml.parse_xml(xml, 'Job_Id').items())[0][1]
-                 sge_status = jobdef['job_state']
-            else:
-                qstat_out = subprocess.check_output(['qstat'])
-                sge_status = _parse_qstat_state(qstat_out, self.job_id)
+            qstat_out = subprocess.check_output(['qstat'])
+            sge_status = _parse_qstat_state(qstat_out, self.job_id)
             if sge_status.lower() == 'r':
                 logger.info('Job is running...')
             elif sge_status == 'qw' or sge_status == 'Q':
