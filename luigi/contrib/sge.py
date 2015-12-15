@@ -109,7 +109,7 @@ logger.propagate = 0
 
 POLL_TIME = 5  # decided to hard-code rather than configure here
 
-TORQUE=True #make this a parameter
+TORQUE = 'torque'
 
 def _clean_task_id(task_id):
     """Clean the task ID so qsub allows it as a "name" string."""
@@ -139,7 +139,7 @@ def _parse_qstat_state(qstat_out, job_id):
     return 'u'
 
 
-def _parse_qsub_job_id(qsub_out):
+def _parse_qsub_job_id(qsub_out, software='sge'):
     """Parse job id from qsub output string.
 
     Assume format:
@@ -147,12 +147,12 @@ def _parse_qsub_job_id(qsub_out):
         "Your job <job_id> ("<job_name>") has been submitted"
 
     """
-    if TORQUE: return int(qsub_out.split('.')[0])
+    if software == TORQUE: return int(qsub_out.split('.')[0])
     return int(qsub_out.split()[2])
 
-def _build_qsub_command(cmd, job_name, outfile, errfile, pe, n_cpu):
+def _build_qsub_command(cmd, job_name, outfile, errfile, pe, n_cpu, software='sge'):
     """Submit shell command to SGE queue via `qsub`"""
-    if TORQUE: qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -l nodes=1:ppn={n_cpu} -N {job_name}"""
+    if software == TORQUE: qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -l nodes=1:ppn={n_cpu} -N {job_name}"""
     else: qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -pe {pe} {n_cpu} -N {job_name}"""
     return qsub_template.format(
         cmd=cmd, job_name=job_name, outfile=outfile, errfile=errfile,
@@ -184,6 +184,7 @@ class SGEJobTask(luigi.Task):
     n_cpu = luigi.IntParameter(default=2, significant=False)
     shared_tmp_dir = luigi.Parameter(default='/home', significant=False)
     parallel_env = luigi.Parameter(default='orte', significant=False)
+    software = luigi.Parameter(default='sge', significant=False)
 
     def _fetch_task_failures(self):
         if not os.path.exists(self.errfile):
@@ -258,12 +259,12 @@ class SGEJobTask(luigi.Task):
         self.outfile = os.path.join(self.tmp_dir, 'job.out')
         self.errfile = os.path.join(self.tmp_dir, 'job.err')
         submit_cmd = _build_qsub_command(job_str, self.task_family, self.outfile,
-                                         self.errfile, self.parallel_env, self.n_cpu)
+                                         self.errfile, self.parallel_env, self.n_cpu, self.software)
         logger.debug('qsub command: \n' + submit_cmd)
 
         # Submit the job and grab job ID
         output = subprocess.check_output(submit_cmd, shell=True)
-        self.job_id = _parse_qsub_job_id(output)
+        self.job_id = _parse_qsub_job_id(output, self.software)
         logger.debug("Submitted job to qsub with response:\n" + output)
 
         self._track_job()
@@ -304,6 +305,8 @@ class SGEJobTask(luigi.Task):
                 logger.info('Status is : %s' % sge_status)
                 raise Exception("job status isn't one of ['r', 'qw', 'E*', 't', 'u']: %s" % sge_status)
 
+class TorqueJobTask(SGEJobTask):
+    software = luigi.Parameter(default=TORQUE)
 
 class LocalSGEJobTask(SGEJobTask):
     """A local version of SGEJobTask, for easier debugging.
