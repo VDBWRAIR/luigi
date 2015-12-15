@@ -109,6 +109,7 @@ logger.propagate = 0
 
 POLL_TIME = 5  # decided to hard-code rather than configure here
 
+TORQUE=True #make this a parameter
 
 def _clean_task_id(task_id):
     """Clean the task ID so qsub allows it as a "name" string."""
@@ -146,12 +147,13 @@ def _parse_qsub_job_id(qsub_out):
         "Your job <job_id> ("<job_name>") has been submitted"
 
     """
+    if TORQUE: return int(qsub_out.split('.')[0])
     return int(qsub_out.split()[2])
-
 
 def _build_qsub_command(cmd, job_name, outfile, errfile, pe, n_cpu):
     """Submit shell command to SGE queue via `qsub`"""
-    qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -pe {pe} {n_cpu} -N {job_name}"""
+    if TORQUE: qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -l nodes=1:ppn={n_cpu} -N {job_name}"""
+    else: qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -pe {pe} {n_cpu} -N {job_name}"""
     return qsub_template.format(
         cmd=cmd, job_name=job_name, outfile=outfile, errfile=errfile,
         pe=pe, n_cpu=n_cpu)
@@ -278,16 +280,23 @@ class SGEJobTask(luigi.Task):
 
             # See what the job's up to
             # ASSUMPTION
-            qstat_out = subprocess.check_output(['qstat'])
-            sge_status = _parse_qstat_state(qstat_out, self.job_id)
-            if sge_status == 'r':
+
+            if TORQUE:
+                 from pypbs import qstat, pbsxml
+                 xml = qstat.get_qstat_xml(jobs=[self.job_id])
+                 jobdef = list(pbsxml.parse_xml(xml, 'Job_Id').items())[0][1]
+                 sge_status = jobdef['job_state']
+            else:
+                qstat_out = subprocess.check_output(['qstat'])
+                sge_status = _parse_qstat_state(qstat_out, self.job_id)
+            if sge_status.lower() == 'r':
                 logger.info('Job is running...')
-            elif sge_status == 'qw':
+            elif sge_status == 'qw' or sge_status == 'Q':
                 logger.info('Job is pending...')
             elif 'E' in sge_status:
                 logger.error('Job has FAILED:\n' + '\n'.join(self._fetch_task_failures()))
                 break
-            elif sge_status == 't' or sge_status == 'u':
+            elif sge_status == 't' or sge_status == 'u' or sge_status == 'C':
                 # Then the job could either be failed or done.
                 errors = self._fetch_task_failures()
                 if not errors:
