@@ -273,7 +273,7 @@ class SGEJobTask(luigi.Task):
         if self.tmp_dir and os.path.exists(self.tmp_dir):
             logger.info('Removing temporary directory %s' % self.tmp_dir)
             shutil.rmtree(self.tmp_dir)
-    
+
 
     def _track_job(self):
         while True:
@@ -307,6 +307,13 @@ class SGEJobTask(luigi.Task):
 
 class TorqueJobTask(SGEJobTask):
     software = luigi.Parameter(default=TORQUE)
+    local = luigi.BoolParameter()
+    def run(self):
+        if self.local:
+            self.work()
+        else:
+            super(TorqueJobTask, self).work()
+
 
 class LocalSGEJobTask(SGEJobTask):
     """A local version of SGEJobTask, for easier debugging.
