@@ -201,7 +201,6 @@ class SGEJobTask(luigi.Task):
     def _init_local(self):
         def up(p): return os.path.dirname(os.path.normpath(p))
         unstale = lambda f:  f if os.path.exists(f) else unstale(up(f))
-        #self.unstale = unstale(self.output().path)
         self.unstales = map(lambda x: unstale(x.path), flatten(self.output()))
 
         # Set up temp folder in shared directory (trim to max filename length)
@@ -301,14 +300,8 @@ class SGEJobTask(luigi.Task):
                 errors = self._fetch_task_failures()
                 errors = [e for e in errors if not "warning" in e.lower()]
                 if not errors:
-                    logger.info('Job is done')
-                   #logger.info(qstat_out)
-
-                    #os.listdir(up(up(up(self.output().path))))
-                    map(os.listdir, self.unstales)
-                    #os.listdir(up(up(self.output().path)))
-                    #os.listdir(up(self.output().path))
-                    # this fixes the stale file error
+                    logger.info('Job is done') 
+                    map(os.listdir, self.unstales) # this fixes the stale file error
                 else:
                     logger.error('Job has FAILED:\n' + '\n'.join(errors))
                 break
