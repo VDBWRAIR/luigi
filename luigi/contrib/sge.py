@@ -103,6 +103,7 @@ except ImportError:
 import luigi
 import luigi.hadoop
 from luigi.contrib import sge_runner
+from luigi.task import flatten
 
 logger = logging.getLogger('luigi-interface')
 logger.propagate = 0
@@ -197,8 +198,11 @@ class SGEJobTask(luigi.Task):
         if errors[0].strip() == 'stdin: is not a tty':  # SGE complains when we submit through a pipe
             errors.pop(0)
         return errors
-
     def _init_local(self):
+        def up(p): return os.path.dirname(os.path.normpath(p))
+        unstale = lambda f:  f if os.path.exists(f) else unstale(up(f))
+        #self.unstale = unstale(self.output().path)
+        self.unstales = map(lambda x: unstale(x.path), flatten(self.output()))
 
         # Set up temp folder in shared directory (trim to max filename length)
         base_tmp_dir = self.shared_tmp_dir
@@ -295,8 +299,16 @@ class SGEJobTask(luigi.Task):
             elif sge_status == 't' or sge_status == 'u' or sge_status == 'C':
                 # Then the job could either be failed or done.
                 errors = self._fetch_task_failures()
+                errors = [e for e in errors if not "warning" in e.lower()]
                 if not errors:
                     logger.info('Job is done')
+                   #logger.info(qstat_out)
+
+                    #os.listdir(up(up(up(self.output().path))))
+                    map(os.listdir, self.unstales)
+                    #os.listdir(up(up(self.output().path)))
+                    #os.listdir(up(self.output().path))
+                    # this fixes the stale file error
                 else:
                     logger.error('Job has FAILED:\n' + '\n'.join(errors))
                 break
