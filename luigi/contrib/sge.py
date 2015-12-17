@@ -310,16 +310,6 @@ class SGEJobTask(luigi.Task):
                 logger.info('Status is : %s' % sge_status)
                 raise Exception("job status isn't one of ['r', 'qw', 'E*', 't', 'u']: %s" % sge_status)
 
-class TorqueJobTask(SGEJobTask):
-    software = luigi.Parameter(default=TORQUE)
-    local = luigi.BoolParameter()
-    def run(self):
-        if self.local:
-            self.work()
-        else:
-            super(TorqueJobTask, self).work()
-
-
 class LocalSGEJobTask(SGEJobTask):
     """A local version of SGEJobTask, for easier debugging.
 
@@ -330,3 +320,14 @@ class LocalSGEJobTask(SGEJobTask):
 
     def run(self):
         self.work()
+
+class OptionallyCluterTask(SGEJobTask):
+    """Optionally local version of SGEJobTask.
+
+    This version skips the ``qsub`` steps and simply runs ``work()``
+    if the ``local`` parameter is true.
+    """
+    local = luigi.BoolParameter(significant=False)
+    def run(self):
+        if self.local: return self.work()
+        super(RunSampleTask, self).run()
