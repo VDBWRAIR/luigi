@@ -331,4 +331,4 @@ class OptionallyCluterTask(SGEJobTask):
     local = luigi.BoolParameter(significant=False)
     def run(self):
         if self.local: return self.work()
-        super(RunSampleTask, self).run()
+        super(OptionallyClusterTask, self).run()
