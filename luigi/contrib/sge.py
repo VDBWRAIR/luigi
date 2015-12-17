@@ -103,12 +103,14 @@ except ImportError:
 import luigi
 import luigi.hadoop
 from luigi.contrib import sge_runner
+from luigi.task import flatten
 
 logger = logging.getLogger('luigi-interface')
 logger.propagate = 0
 
 POLL_TIME = 5  # decided to hard-code rather than configure here
 
+TORQUE = 'torque'
 
 def _clean_task_id(task_id):
     """Clean the task ID so qsub allows it as a "name" string."""
@@ -133,12 +135,12 @@ def _parse_qstat_state(qstat_out, job_id):
     for line in lines:
         if line:
             job, prior, name, user, state = line.strip().split()[0:5]
-            if int(job) == int(job_id):
+            if int(job[:len(str(job_id))]) == int(job_id):
                 return state
     return 'u'
 
 
-def _parse_qsub_job_id(qsub_out):
+def _parse_qsub_job_id(qsub_out, software='sge'):
     """Parse job id from qsub output string.
 
     Assume format:
@@ -146,12 +148,13 @@ def _parse_qsub_job_id(qsub_out):
         "Your job <job_id> ("<job_name>") has been submitted"
 
     """
+    if software == TORQUE: return int(qsub_out.split('.')[0])
     return int(qsub_out.split()[2])
 
-
-def _build_qsub_command(cmd, job_name, outfile, errfile, pe, n_cpu):
+def _build_qsub_command(cmd, job_name, outfile, errfile, pe, n_cpu, software='sge'):
     """Submit shell command to SGE queue via `qsub`"""
-    qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -pe {pe} {n_cpu} -N {job_name}"""
+    if software == TORQUE: qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -l nodes=1:ppn={n_cpu} -N {job_name}"""
+    else: qsub_template = """echo {cmd} | qsub -o ":{outfile}" -e ":{errfile}" -V -r y -pe {pe} {n_cpu} -N {job_name}"""
     return qsub_template.format(
         cmd=cmd, job_name=job_name, outfile=outfile, errfile=errfile,
         pe=pe, n_cpu=n_cpu)
@@ -182,6 +185,7 @@ class SGEJobTask(luigi.Task):
     n_cpu = luigi.IntParameter(default=2, significant=False)
     shared_tmp_dir = luigi.Parameter(default='/home', significant=False)
     parallel_env = luigi.Parameter(default='orte', significant=False)
+    software = luigi.Parameter(default='sge', significant=False)
 
     def _fetch_task_failures(self):
         if not os.path.exists(self.errfile):
@@ -194,8 +198,10 @@ class SGEJobTask(luigi.Task):
         if errors[0].strip() == 'stdin: is not a tty':  # SGE complains when we submit through a pipe
             errors.pop(0)
         return errors
-
     def _init_local(self):
+        def up(p): return os.path.dirname(os.path.normpath(p))
+        unstale = lambda f:  f if os.path.exists(f) else unstale(up(f))
+        self.unstales = map(lambda x: unstale(x.path), flatten(self.output()))
 
         # Set up temp folder in shared directory (trim to max filename length)
         base_tmp_dir = self.shared_tmp_dir
@@ -256,12 +262,12 @@ class SGEJobTask(luigi.Task):
         self.outfile = os.path.join(self.tmp_dir, 'job.out')
         self.errfile = os.path.join(self.tmp_dir, 'job.err')
         submit_cmd = _build_qsub_command(job_str, self.task_family, self.outfile,
-                                         self.errfile, self.parallel_env, self.n_cpu)
+                                         self.errfile, self.parallel_env, self.n_cpu, self.software)
         logger.debug('qsub command: \n' + submit_cmd)
 
         # Submit the job and grab job ID
         output = subprocess.check_output(submit_cmd, shell=True)
-        self.job_id = _parse_qsub_job_id(output)
+        self.job_id = _parse_qsub_job_id(output, self.software)
         logger.debug("Submitted job to qsub with response:\n" + output)
 
         self._track_job()
@@ -271,6 +277,7 @@ class SGEJobTask(luigi.Task):
             logger.info('Removing temporary directory %s' % self.tmp_dir)
             shutil.rmtree(self.tmp_dir)
 
+
     def _track_job(self):
         while True:
             # Sleep for a little bit
@@ -278,20 +285,23 @@ class SGEJobTask(luigi.Task):
 
             # See what the job's up to
             # ASSUMPTION
+
             qstat_out = subprocess.check_output(['qstat'])
             sge_status = _parse_qstat_state(qstat_out, self.job_id)
-            if sge_status == 'r':
+            if sge_status.lower() == 'r':
                 logger.info('Job is running...')
-            elif sge_status == 'qw':
+            elif sge_status == 'qw' or sge_status == 'Q':
                 logger.info('Job is pending...')
             elif 'E' in sge_status:
                 logger.error('Job has FAILED:\n' + '\n'.join(self._fetch_task_failures()))
                 break
-            elif sge_status == 't' or sge_status == 'u':
+            elif sge_status == 't' or sge_status == 'u' or sge_status == 'C':
                 # Then the job could either be failed or done.
                 errors = self._fetch_task_failures()
+                errors = [e for e in errors if not "warning" in e.lower()]
                 if not errors:
-                    logger.info('Job is done')
+                    logger.info('Job is done') 
+                    map(os.listdir, self.unstales) # this fixes the stale file error
                 else:
                     logger.error('Job has FAILED:\n' + '\n'.join(errors))
                 break
@@ -299,6 +309,15 @@ class SGEJobTask(luigi.Task):
                 logger.info('Job status is UNKNOWN!')
                 logger.info('Status is : %s' % sge_status)
                 raise Exception("job status isn't one of ['r', 'qw', 'E*', 't', 'u']: %s" % sge_status)
+
+class TorqueJobTask(SGEJobTask):
+    software = luigi.Parameter(default=TORQUE)
+    local = luigi.BoolParameter()
+    def run(self):
+        if self.local:
+            self.work()
+        else:
+            super(TorqueJobTask, self).work()
 
 
 class LocalSGEJobTask(SGEJobTask):
