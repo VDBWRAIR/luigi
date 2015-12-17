@@ -111,6 +111,7 @@ logger.propagate = 0
 POLL_TIME = 5  # decided to hard-code rather than configure here
 
 TORQUE = 'torque'
+SGE = 'sge'
 
 def _clean_task_id(task_id):
     """Clean the task ID so qsub allows it as a "name" string."""
@@ -185,7 +186,7 @@ class SGEJobTask(luigi.Task):
     n_cpu = luigi.IntParameter(default=2, significant=False)
     shared_tmp_dir = luigi.Parameter(default='/home', significant=False)
     parallel_env = luigi.Parameter(default='orte', significant=False)
-    software = luigi.Parameter(default='sge', significant=False)
+    software = luigi.Parameter(default=SGE, significant=False)
 
     def _fetch_task_failures(self):
         if not os.path.exists(self.errfile):
@@ -310,16 +311,6 @@ class SGEJobTask(luigi.Task):
                 logger.info('Status is : %s' % sge_status)
                 raise Exception("job status isn't one of ['r', 'qw', 'E*', 't', 'u']: %s" % sge_status)
 
-class TorqueJobTask(SGEJobTask):
-    software = luigi.Parameter(default=TORQUE)
-    local = luigi.BoolParameter()
-    def run(self):
-        if self.local:
-            self.work()
-        else:
-            super(TorqueJobTask, self).work()
-
-
 class LocalSGEJobTask(SGEJobTask):
     """A local version of SGEJobTask, for easier debugging.
 
@@ -330,3 +321,14 @@ class LocalSGEJobTask(SGEJobTask):
 
     def run(self):
         self.work()
+
+class OptionallyCluterTask(SGEJobTask):
+    """Optionally local version of SGEJobTask.
+
+    This version skips the ``qsub`` steps and simply runs ``work()``
+    if the ``local`` parameter is true.
+    """
+    local = luigi.BoolParameter(significant=False)
+    def run(self):
+        if self.local: return self.work()
+        super(RunSampleTask, self).run()
