@@ -111,6 +111,7 @@ logger.propagate = 0
 POLL_TIME = 5  # decided to hard-code rather than configure here
 
 TORQUE = 'torque'
+SGE = 'sge'
 
 def _clean_task_id(task_id):
     """Clean the task ID so qsub allows it as a "name" string."""
@@ -185,7 +186,7 @@ class SGEJobTask(luigi.Task):
     n_cpu = luigi.IntParameter(default=2, significant=False)
     shared_tmp_dir = luigi.Parameter(default='/home', significant=False)
     parallel_env = luigi.Parameter(default='orte', significant=False)
-    software = luigi.Parameter(default='sge', significant=False)
+    software = luigi.Parameter(default=SGE, significant=False)
 
     def _fetch_task_failures(self):
         if not os.path.exists(self.errfile):
